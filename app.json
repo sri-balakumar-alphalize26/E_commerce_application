@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "369 Mart",
+    "slug": "369-mart",
+    "scheme": "mart369",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.alphalize.mart369"
+    },
+    "android": {
+      "package": "com.alphalize.mart369",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "output": "single",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
