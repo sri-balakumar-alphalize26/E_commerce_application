@@ -4,15 +4,14 @@ import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, View } from 'react-native';
 import { isMock } from '../../src/api/endpoints';
 import { money } from '../../src/lib/format';
+import { useNotifications } from '../../src/hooks/queries';
+import { useCart } from '../../src/store/cart';
 import { useSession } from '../../src/store/session';
 import { toast } from '../../src/store/toast';
 import { neutral, PAD, useTheme } from '../../src/theme/tokens';
 import { Btn, Screen } from '../../src/ui/chrome';
 import { Icon, IconName } from '../../src/ui/Icon';
 import { T } from '../../src/ui/T';
-
-/** What the rows still to be built say when tapped. */
-const soon = (what: string) => () => toast(`${what} arrives with the next update.`);
 
 function Shortcut({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
   const t = useTheme();
@@ -88,6 +87,8 @@ export default function Account() {
   const queryClient = useQueryClient();
   const customer = useSession((s) => s.customer);
   const logout = useSession((s) => s.logout);
+  const { data: notices } = useNotifications();
+  const unread = (notices ?? []).filter((n) => !n.read).length;
 
   if (!customer) {
     return (
@@ -139,7 +140,22 @@ export default function Account() {
               {[customer.phone, customer.email].filter(Boolean).join(' · ')}
             </T>
           </View>
-          {isMock() ? (
+          <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Edit profile"
+          hitSlop={8}
+          onPress={() => router.push('/profile')}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 17,
+            backgroundColor: 'rgba(255,255,255,0.16)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <Icon name="edit" size={16} color="#fff" />
+        </Pressable>
+        {isMock() ? (
             <View style={{ backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
               <T w={600} s={10} c="#fff">
                 Demo
@@ -176,7 +192,7 @@ export default function Account() {
             </View>
             <Pressable
               accessibilityRole="button"
-              onPress={soon('Adding money to the wallet')}
+              onPress={() => router.push('/wallet')}
               style={{ borderWidth: 1, borderColor: t.accLn, borderRadius: 7, paddingVertical: 5, paddingHorizontal: 10 }}>
               <T w={600} s={11.5} c={t.accInk}>
                 Add money
@@ -189,17 +205,24 @@ export default function Account() {
 
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: PAD }}>
           <Shortcut icon="orders" label="Orders" onPress={() => router.navigate('/orders')} />
-          <Shortcut icon="heart" label="My list" onPress={soon('My list')} />
+          <Shortcut icon="heart" label="My list" onPress={() => router.push('/list')} />
           <Shortcut icon="pin" label="Addresses" onPress={() => router.push('/addresses')} />
-          <Shortcut icon="card" label="Payments" onPress={soon('Saved payments')} />
+          <Shortcut icon="card" label="Payments" onPress={() => router.push('/payments')} />
         </View>
 
         <View style={{ backgroundColor: neutral.sur }}>
-          <Row icon="gift" title="Refer & earn" onPress={soon('Refer & earn')} />
-          <Row icon="tag" title="Coupons & rewards" onPress={soon('Coupons & rewards')} />
-          <Row icon="bell" title="Notifications" onPress={soon('Notifications')} />
-          <Row icon="replace" title="Returns & replacements" onPress={soon('Returns')} />
-          <Row icon="help" title="Help & support" onPress={soon('Help & support')} />
+          <Row icon="gift" title="Refer & earn" onPress={() => router.push('/refer')} />
+          <Row icon="tag" title="Coupons & rewards" onPress={() => router.push('/rewards')} />
+          <Row icon="trend" title="Points" onPress={() => router.push('/points')} />
+          <Row
+            icon="bell"
+            title="Notifications"
+            note={unread ? `${unread} new` : undefined}
+            onPress={() => router.push('/notifications')}
+          />
+          <Row icon="replace" title="Returns & replacements" note="Start from a delivered order" onPress={() => router.navigate('/orders')} />
+          <Row icon="edit" title="My reviews" onPress={() => router.push('/reviews')} />
+          <Row icon="help" title="Help & support" onPress={() => router.push('/support')} />
           <Row icon="info" title="About 369 Mart" note="Version 1.0" onPress={() => toast('369 Mart · version 1.0')} />
           <Row
             danger
@@ -208,6 +231,10 @@ export default function Account() {
             title="Log out"
             onPress={async () => {
               await logout();
+              // The next person to sign in on this phone starts with their own list.
+              useCart.getState().setWish([]);
+              queryClient.removeQueries({ queryKey: ['wallet'] });
+              queryClient.removeQueries({ queryKey: ['notifications'] });
               queryClient.removeQueries({ queryKey: ['orders'] });
               queryClient.removeQueries({ queryKey: ['addresses'] });
               queryClient.removeQueries({ queryKey: ['order'] });

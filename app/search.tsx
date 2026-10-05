@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { FlatList, Pressable, TextInput, View } from 'react-native';
 import { api } from '../src/api/endpoints';
-import { font, neutral, PAD } from '../src/theme/tokens';
+import { useSession } from '../src/store/session';
+import { font, neutral, PAD, useTheme } from '../src/theme/tokens';
 import { CartBtn, Loading, Screen, SubHeader } from '../src/ui/chrome';
 import { Icon } from '../src/ui/Icon';
 import { ProductCard } from '../src/ui/product';
@@ -20,7 +21,25 @@ export default function Search() {
     return () => clearTimeout(timer);
   }, [text]);
 
+  const t = useTheme();
+  const queryClient = useQueryClient();
+  const signedIn = useSession((s) => !!s.customer);
   const { data: trending } = useQuery({ queryKey: ['trending'], queryFn: () => api.trending() });
+  const { data: recent } = useQuery({ queryKey: ['recent'], queryFn: () => api.recentSearches(), enabled: signedIn });
+
+  // A search the customer finished typing (not every letter on the way) is remembered on their account.
+  const remember = (term: string) => {
+    const clean = term.trim();
+    if (!signedIn || clean.length < 2) return;
+    api
+      .addRecentSearch(clean)
+      .then((list) => queryClient.setQueryData(['recent'], list))
+      .catch(() => {});
+  };
+  const pick = (term: string) => {
+    setText(term);
+    remember(term);
+  };
   const { data: results, error, refetch, isFetching } = useQuery({
     queryKey: ['search', q],
     queryFn: () => api.search(q),
@@ -54,6 +73,7 @@ export default function Search() {
               placeholder="Search for products and brands"
               placeholderTextColor={neutral.mut}
               returnKeyType="search"
+              onSubmitEditing={() => remember(text)}
               autoCorrect={false}
               style={[font(400), { flex: 1, fontSize: 13, color: neutral.ink, padding: 0, height: 34 }]}
             />
@@ -69,6 +89,51 @@ export default function Search() {
 
       {!q ? (
         <View style={{ padding: PAD, gap: 10 }}>
+          {recent?.length ? (
+            <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <T w={600} s={13}>
+                  Your recent searches
+                </T>
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={10}
+                  onPress={() =>
+                    api
+                      .clearRecentSearches()
+                      .then((list) => queryClient.setQueryData(['recent'], list))
+                      .catch(() => {})
+                  }>
+                  <T w={500} s={12} c={t.accInk}>
+                    Clear
+                  </T>
+                </Pressable>
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                {recent.map((term) => (
+                  <Pressable
+                    key={term}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Search ${term} again`}
+                    onPress={() => pick(term)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 5,
+                      height: 32,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: neutral.ln,
+                      backgroundColor: neutral.sur,
+                    }}>
+                    <Icon name="clock" size={13} color={neutral.mut} />
+                    <T s={12}>{term}</T>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : null}
           <T w={600} s={13}>
             Trending searches
           </T>
@@ -78,7 +143,7 @@ export default function Search() {
                 key={term}
                 accessibilityRole="button"
                 accessibilityLabel={`Search ${term}`}
-                onPress={() => setText(term)}
+                onPress={() => pick(term)}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
