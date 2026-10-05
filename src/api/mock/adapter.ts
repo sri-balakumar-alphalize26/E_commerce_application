@@ -5,18 +5,25 @@ import {
   ApiError,
   Bill,
   CategoryNode,
+  ChatMessage,
   Customer,
   DraftRequest,
   FeeLine,
   HomeFeed,
   Mode,
   Order,
+  MyReview,
+  Notice,
   OrderLine,
+  OrderReturn,
   OrderStatus,
   PayMethod,
   Product,
+  SavedUpi,
+  ScratchCard,
   Slot,
   TimelineStep,
+  WalletEntry,
 } from '../types';
 import {
   BANNERS,
@@ -58,13 +65,55 @@ interface DemoOrder {
   address: Address;
   slot: string;
   otp: string;
+  returns?: OrderReturn[];
 }
 
 interface DemoState {
   customer: Customer | null;
   addresses: Address[];
   orders: DemoOrder[];
+  wish: string[];
+  ledger: WalletEntry[];
+  cards: ScratchCard[];
+  notices: Notice[];
+  upis: SavedUpi[];
+  recent: string[];
+  reviews: Record<string, MyReview>;
 }
+
+/** What the account pages hold on a fresh demo. Times are set when the demo first opens. */
+function freshExtras(): Pick<DemoState, 'wish' | 'ledger' | 'cards' | 'notices' | 'upis' | 'recent' | 'reviews'> {
+  const now = Date.now();
+  const day = 86400000;
+  return {
+    wish: ['ssd'],
+    ledger: [
+      { id: 'w2', kind: 'reward', amount: 50, title: 'Scratch card reward', sub: 'From your first order', at: now - 2 * day },
+      { id: 'w1', kind: 'add', amount: 200, title: 'Money added', sub: 'UPI', at: now - 6 * day },
+    ],
+    cards: [
+      { id: 's1', from: 'Welcome gift', scratched: false, reward: { type: 'cash', amount: 25 } },
+      { id: 's2', from: 'Your first order', scratched: true, reward: { type: 'coupon', code: 'WELCOME50', title: 'Flat ₹50 off' } },
+    ],
+    notices: [
+      { id: 'n2', type: 'offer', title: 'Desk upgrade week', text: 'Keyboards and mice at up to 27% off.', at: now - day, read: false, go: ['offers'] },
+      { id: 'n1', type: 'wallet', title: 'Scratch card waiting', text: 'You have a card to scratch in Coupons & rewards.', at: now - 2 * day, read: false, go: ['account', 'rewards'] },
+    ],
+    upis: [{ id: 'u1', vpa: 'bala@okaxis', app: 'gpay', isDefault: true }],
+    recent: [],
+    reviews: {},
+  };
+}
+
+const SUPPORT_CHIPS = ['Track my order', 'Refund status', 'Cancel an order', 'Payment issue', 'Delivery charges', 'Talk to an agent'];
+/** The demo's conversation with a person. Starts again each time the app does. */
+let demoChat: ChatMessage[] = [];
+
+const DEMO_POINTS = 120;
+/** Ten points are worth one rupee. */
+const POINTS_PER_RUPEE = 10;
+const WALLET_LIMIT = 10000;
+const MIN_TOPUP = 10;
 
 let state: DemoState | null = null;
 
@@ -76,14 +125,15 @@ async function load(): Promise<DemoState> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (raw) {
-      state = JSON.parse(raw) as DemoState;
+      // A demo saved before the account pages existed has none of their data.
+      state = { ...freshExtras(), ...(JSON.parse(raw) as DemoState) };
       return state;
     }
   } catch {
     // Unreadable: start the demo again rather than fail.
   }
   // The demo opens signed in, so every screen has something on it.
-  state = { customer: DEMO_CUSTOMER, addresses: [DEMO_ADDRESS], orders: [] };
+  state = { customer: DEMO_CUSTOMER, addresses: [DEMO_ADDRESS], orders: [], ...freshExtras() };
   return state;
 }
 
@@ -142,7 +192,9 @@ function placedText(at: number): string {
 }
 
 /** Seconds after placing at which each Quick step begins: packed, picked up, on the way, delivered. */
-const QUICK_STEPS = [20, 40, 60, 13 * 60];
+const QUICK_STEPS = [15, 30, 45, 90];
+/** What the customer is told the trip takes; the demo squeezes it into `QUICK_STEPS[3]` seconds. */
+const QUICK_MINUTES = 13;
 const EXPRESS_STEPS = [30, 60];
 
 function present(o: DemoOrder): Order {
@@ -167,6 +219,8 @@ function present(o: DemoOrder): Order {
       ],
       otp: '',
       canCancel: false,
+      returns: [],
+      substitutes: [],
     };
   }
   const elapsed = (Date.now() - o.at) / 1000;
@@ -192,7 +246,7 @@ function present(o: DemoOrder): Order {
   let statusLine: string;
   if (o.mode === 'quick') {
     status = delivered ? 'delivered' : stage >= 2 ? 'out' : stage === 1 ? 'packed' : 'placed';
-    const left = Math.max(1, Math.ceil((QUICK_STEPS[3] - elapsed) / 60));
+    const left = Math.max(1, Math.ceil(((QUICK_STEPS[3] - elapsed) / QUICK_STEPS[3]) * QUICK_MINUTES));
     headline = delivered ? 'Delivered' : `Arriving in ${left} min${left === 1 ? '' : 's'}`;
     statusLine = delivered
       ? `Handed over at ${clock(o.at + QUICK_STEPS[3] * 1000)}`
@@ -230,10 +284,12 @@ function present(o: DemoOrder): Order {
         ? { name: 'Arun R', note: 'KL 07 BX 4521 · 4.9 rating · 1,240 deliveries' }
         : undefined,
     canCancel: stage === 0,
+    returns: o.returns ?? [],
+    substitutes: [],
   };
 }
 
-function computeBill(items: Record<string, number>, coupon?: string | null, slotFee = 0): Bill {
+function computeBill(items: Record<string, number>, coupon?: string | null, slotFee = 0, usePoints = false): Bill {
   const modes: Record<string, Mode> = {};
   const sub: Record<Mode, number> = { quick: 0, express: 0 };
   let mrp = 0;
@@ -258,6 +314,8 @@ function computeBill(items: Record<string, number>, coupon?: string | null, slot
     feeTotal += fee;
   }
 
+  const pointsValue = DEMO_POINTS / POINTS_PER_RUPEE;
+  const pointsOff = usePoints && count ? pointsValue : 0;
   const applied = coupon === COUPON.code && itemsTotal > COUPON.off;
   const couponOff = applied ? COUPON.off : 0;
 
@@ -271,8 +329,9 @@ function computeBill(items: Record<string, number>, coupon?: string | null, slot
     coupon: applied ? COUPON.code : null,
     couponOff,
     couponHint: applied || !count ? undefined : { code: COUPON.code, saves: COUPON.off },
-    total: itemsTotal + feeTotal + slotFee - couponOff,
+    total: itemsTotal + feeTotal + slotFee - couponOff - pointsOff,
     saved: mrp - itemsTotal + couponOff,
+    points: count ? { usable: DEMO_POINTS, value: pointsValue, applied: usePoints, off: pointsOff } : undefined,
   };
 }
 
@@ -373,11 +432,15 @@ export const mockAdapter: ApiAdapter = {
   },
 
   async bill(req) {
-    return wait(computeBill(req.items, req.coupon, req.slotFee));
+    return wait(computeBill(req.items, req.coupon, req.slotFee, req.usePoints));
   },
 
   async slots() {
     return wait(slotList());
+  },
+
+  async locate() {
+    return wait({ line: '', area: 'MG Road, Ernakulam', city: 'Kochi', zip: '682016' });
   },
 
   async lookupPin(pin) {
@@ -389,7 +452,7 @@ export const mockAdapter: ApiAdapter = {
     const address = s.addresses.find((a) => a.id === req.addressId);
     if (!address) throw new ApiError('invalid', 'Choose a delivery address.', 'address');
     const slot = slotList().find((x) => x.key === req.slotKey);
-    const bill = computeBill(req.items, req.coupon, slot?.fee ?? 0);
+    const bill = computeBill(req.items, req.coupon, slot?.fee ?? 0, req.usePoints);
     if (!bill.count) throw new ApiError('invalid', 'Your cart is empty.');
     let ref = req.ref ?? '';
     while (!ref || (ref !== req.ref && s.orders.some((o) => o.ref === ref) && s.orders.length < 90)) {
@@ -432,6 +495,7 @@ export const mockAdapter: ApiAdapter = {
     const s = await load();
     s.customer = { name: input.name.trim(), email: input.email.trim(), phone: input.phone?.trim() ?? '', walletBalance: 0 };
     s.addresses = [];
+    Object.assign(s, freshExtras(), { wish: [], ledger: [], cards: [], upis: [] });
     s.orders = [];
     await save();
     return wait(s.customer);
@@ -511,6 +575,304 @@ export const mockAdapter: ApiAdapter = {
     found.cancelled = true;
     await save();
     return wait(present(found));
+  },
+
+  async requestReturn(ref, input) {
+    const s = await signedIn();
+    const found = s.orders.find((o) => o.ref === ref);
+    if (!found) throw new ApiError('not_found', 'That order is not on this account.');
+    if (present(found).status !== 'delivered') {
+      throw new ApiError('invalid', 'You can ask for a return once the order has been delivered.');
+    }
+    if (!input.reason.trim()) throw new ApiError('invalid', 'Tell us what went wrong.', 'reason');
+    found.returns = [
+      ...(found.returns ?? []),
+      {
+        id: `ret${Date.now()}`,
+        kind: input.kind,
+        state: 'requested',
+        reason: input.reason,
+        detail: input.detail,
+        amount: found.total,
+        refunded: 0,
+        photos: input.photos.length,
+        at: Date.now(),
+      },
+    ];
+    await save();
+    return wait(present(found));
+  },
+
+  async answerSubstitute() {
+    // The demo shop never runs out of anything.
+    throw new ApiError('not_found', 'No such replacement.');
+  },
+
+  async rateOrder(ref, input) {
+    const s = await signedIn();
+    if (!s.orders.some((o) => o.ref === ref)) throw new ApiError('not_found', 'That order is not on this account.');
+    if (!(input.stars >= 1 && input.stars <= 5)) throw new ApiError('invalid', 'Choose a rating first.', 'stars');
+    await wait(null);
+  },
+
+  async invoice() {
+    throw new ApiError('not_found', 'The demo has no invoices. They come from the real shop.');
+  },
+
+  async myReviews() {
+    return wait({ ...(await signedIn()).reviews });
+  },
+
+  async writeReview(productId, input) {
+    const s = await signedIn();
+    if (!(input.stars >= 1 && input.stars <= 5)) throw new ApiError('invalid', 'Choose a rating first.', 'stars');
+    const review: MyReview = {
+      stars: input.stars,
+      title: input.title.trim(),
+      text: input.text.trim(),
+      at: Date.now(),
+      state: 'published',
+      heldReason: '',
+      photos: s.reviews[productId]?.photos ?? 0,
+      verified: s.orders.some((o) => o.lines.some((l) => l.id === productId)),
+    };
+    s.reviews = { ...s.reviews, [productId]: review };
+    await save();
+    return wait(review);
+  },
+
+  async deleteReview(productId) {
+    const s = await signedIn();
+    const next = { ...s.reviews };
+    delete next[productId];
+    s.reviews = next;
+    await save();
+  },
+
+  async addReviewPhoto(productId) {
+    const s = await signedIn();
+    const review = s.reviews[productId];
+    if (!review) throw new ApiError('not_found', 'Write the review first, then add photos.');
+    const next = { ...review, photos: review.photos + 1 };
+    s.reviews = { ...s.reviews, [productId]: next };
+    await save();
+    return wait(next);
+  },
+
+  async supportStart() {
+    await signedIn();
+    return wait({
+      greeting: { from: 'bot' as const, text: 'Hello! How can I help you today?', chips: SUPPORT_CHIPS },
+      withAgent: demoChat.length > 0,
+      history: [...demoChat],
+    });
+  },
+
+  async supportAsk(text) {
+    const s = await signedIn();
+    const said = text.toLowerCase();
+    if (said.includes('agent') || said.includes('person') || said.includes('human')) {
+      return wait({ reply: { from: 'bot' as const, text: 'Connecting you to a support agent…' }, toAgent: true });
+    }
+    let reply: ChatMessage;
+    if (said.includes('track') || said.includes('where')) {
+      const latest = s.orders[0];
+      reply = latest
+        ? {
+            from: 'bot',
+            text: `Order #${latest.ref}: ${present(latest).headline.toLowerCase()}.`,
+            actions: [{ label: `Track #${latest.ref}`, go: ['track', latest.ref] }],
+          }
+        : { from: 'bot', text: 'You have no orders on the way right now.', chips: SUPPORT_CHIPS };
+    } else if (said.includes('deliver') || said.includes('charge') || said.includes('fee')) {
+      reply = { from: 'bot', text: 'Quick: ₹30 delivery, free above ₹499. Express: ₹49 delivery, free above ₹999.' };
+    } else if (said.includes('refund')) {
+      reply = { from: 'bot', text: 'Refunds go to your 369 Wallet as soon as the shop approves them.', actions: [{ label: 'Open wallet', go: ['account', 'wallet'] }] };
+    } else if (said.includes('cancel')) {
+      reply = { from: 'bot', text: 'You can cancel an order from its page until it is packed.', actions: [{ label: 'My orders', go: ['orders'] }] };
+    } else if (said.includes('pay')) {
+      reply = { from: 'bot', text: 'If money left your account but the order did not go through, it comes back within 5 working days.' };
+    } else {
+      reply = { from: 'bot', text: "I'm not sure I got that. Pick a topic below, or I can connect you to a person.", chips: SUPPORT_CHIPS };
+    }
+    return wait({ reply, toAgent: false });
+  },
+
+  async supportAgent(text) {
+    await signedIn();
+    demoChat = [{ from: 'me', text, at: Date.now() }];
+    return wait({
+      reply: "Hi, I'm Anjali from 369 Mart support. I can see your recent orders - tell me what went wrong.",
+      history: [...demoChat],
+    });
+  },
+
+  async supportSay(text) {
+    await signedIn();
+    demoChat = [...demoChat, { from: 'me', text, at: Date.now() }];
+    return wait({ reply: "Thanks for the details. I've noted this and will get back to you here shortly." });
+  },
+
+  async supportTicket() {
+    await signedIn();
+    return wait(demoChat.length ? [...demoChat] : null);
+  },
+
+  async wishlist() {
+    return wait([...(await signedIn()).wish]);
+  },
+
+  async addWish(id) {
+    const s = await signedIn();
+    s.wish = [id, ...s.wish.filter((x) => x !== id)];
+    await save();
+    return wait([...s.wish]);
+  },
+
+  async removeWish(id) {
+    const s = await signedIn();
+    s.wish = s.wish.filter((x) => x !== id);
+    await save();
+    return wait([...s.wish]);
+  },
+
+  async wallet() {
+    const s = await signedIn();
+    return wait({ balance: s.customer.walletBalance ?? 0, limit: WALLET_LIMIT, minTopup: MIN_TOPUP, ledger: [...s.ledger] });
+  },
+
+  async topUp(amount) {
+    const s = await signedIn();
+    const balance = s.customer.walletBalance ?? 0;
+    if (!(amount >= MIN_TOPUP)) throw new ApiError('invalid', `Add at least ₹${MIN_TOPUP}.`, 'amount');
+    if (balance + amount > WALLET_LIMIT) throw new ApiError('invalid', `The wallet holds up to ₹${WALLET_LIMIT}.`, 'amount');
+    s.customer = { ...s.customer, walletBalance: balance + amount };
+    s.ledger = [{ id: `w${Date.now()}`, kind: 'add', amount, title: 'Money added', sub: 'UPI', at: Date.now() }, ...s.ledger];
+    await save();
+    return wait({ balance: balance + amount, limit: WALLET_LIMIT, minTopup: MIN_TOPUP, ledger: [...s.ledger] });
+  },
+
+  async rewards() {
+    const s = await signedIn();
+    return wait({
+      coupons: [{ code: COUPON.code, title: 'Flat ₹50 off', note: 'On any order above ₹50' }],
+      cards: [...s.cards],
+      won: s.cards.filter((c) => c.scratched && c.reward.code).map((c) => c.reward.code as string),
+    });
+  },
+
+  async scratch(id) {
+    const s = await signedIn();
+    const card = s.cards.find((c) => c.id === id);
+    if (!card) throw new ApiError('not_found', 'That card is not on this account.');
+    if (!card.scratched) {
+      card.scratched = true;
+      if (card.reward.type === 'cash' && card.reward.amount) {
+        const amount = card.reward.amount;
+        s.customer = { ...s.customer, walletBalance: (s.customer.walletBalance ?? 0) + amount };
+        s.ledger = [{ id: `w${Date.now()}`, kind: 'reward', amount, title: 'Scratch card reward', sub: card.from, at: Date.now() }, ...s.ledger];
+      }
+      await save();
+    }
+    return wait({ ...card });
+  },
+
+  async referrals() {
+    await signedIn();
+    return wait({
+      code: 'BALA369',
+      link: 'https://369mart.in/r/BALA369',
+      reward: 500,
+      earned: 500,
+      pending: 500,
+      joined: 2,
+      ordered: 1,
+      friends: [
+        { id: 'r2', name: 'Anjali', status: 'joined', at: Date.now() - 3 * 86400000 },
+        { id: 'r1', name: 'Rahul', status: 'ordered', at: Date.now() - 9 * 86400000 },
+      ],
+    });
+  },
+
+  async points() {
+    await signedIn();
+    return wait({
+      enabled: true,
+      points: DEMO_POINTS,
+      value: DEMO_POINTS / POINTS_PER_RUPEE,
+      cardNumber: '3690 0412 7731',
+      rule: { spend: 100, earn: 10, minRedeem: 100 },
+      earnOn: 'delivered',
+      history: [
+        { id: 'p2', title: 'Points earned', sub: 'Order #36918', points: 90, credit: true, at: Date.now() - 4 * 86400000 },
+        { id: 'p1', title: 'Welcome points', sub: '', points: 30, credit: true, at: Date.now() - 12 * 86400000 },
+      ],
+    });
+  },
+
+  async notifications() {
+    return wait([...(await signedIn()).notices]);
+  },
+
+  async markRead(ids) {
+    const s = await signedIn();
+    s.notices = s.notices.map((n) => (ids === 'all' || ids.includes(n.id) ? { ...n, read: true } : n));
+    await save();
+  },
+
+  async dismissNotice(id) {
+    const s = await signedIn();
+    s.notices = s.notices.filter((n) => n.id !== id);
+    await save();
+  },
+
+  async saveProfile(input) {
+    const s = await signedIn();
+    if (!input.name.trim()) throw new ApiError('invalid', 'Enter your name.', 'name');
+    s.customer = { ...s.customer, name: input.name.trim(), phone: input.phone.trim() };
+    await save();
+    return wait(s.customer);
+  },
+
+  async savedUpis() {
+    return wait([...(await signedIn()).upis]);
+  },
+
+  async addUpi(vpa) {
+    const s = await signedIn();
+    const clean = vpa.trim().toLowerCase();
+    if (!/^[a-z0-9._-]{2,}@[a-z]{2,}$/.test(clean)) throw new ApiError('invalid', 'Enter a UPI ID like name@bank.', 'vpa');
+    if (s.upis.some((u) => u.vpa === clean)) throw new ApiError('invalid', 'This UPI ID is already saved.', 'vpa');
+    s.upis = [...s.upis, { id: `u${Date.now()}`, vpa: clean, app: 'upi', isDefault: !s.upis.length }];
+    await save();
+    return wait([...s.upis]);
+  },
+
+  async removeUpi(id) {
+    const s = await signedIn();
+    s.upis = s.upis.filter((u) => u.id !== id);
+    if (s.upis.length && !s.upis.some((u) => u.isDefault)) s.upis[0] = { ...s.upis[0], isDefault: true };
+    await save();
+    return wait([...s.upis]);
+  },
+
+  async recentSearches() {
+    return wait([...(await load()).recent]);
+  },
+
+  async addRecentSearch(q) {
+    const s = await load();
+    const term = q.trim().toLowerCase();
+    if (term) s.recent = [term, ...s.recent.filter((x) => x !== term)].slice(0, 8);
+    await save();
+    return wait([...s.recent]);
+  },
+
+  async clearRecentSearches() {
+    const s = await load();
+    s.recent = [];
+    await save();
+    return wait([]);
   },
 
   async orders() {

@@ -140,3 +140,39 @@ export function absolute(path: string | undefined | null): string | undefined {
   if (/^https?:\/\//i.test(path)) return path;
   return `${peekServer().url}${path.startsWith('/') ? '' : '/'}${path}`;
 }
+
+/** Turns a downloaded file into base64 text, the form the phone's file store takes. */
+function toBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new ApiError('unknown', 'The file could not be read.'));
+    reader.onloadend = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      resolve(text.slice(text.indexOf(',') + 1));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Fetch a file the shop makes for the signed-in customer (an invoice). A JSON
+ * answer here is the shop saying why there is no file, and is thrown as such.
+ */
+export async function download(path: string): Promise<string> {
+  const { url } = peekServer();
+  let res: Response;
+  try {
+    res = await fetch(`${url}${path}`, { credentials: 'include' });
+  } catch {
+    throw new ApiError('network', 'Could not reach the shop. Check your connection.');
+  }
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    const payload = (await res.json().catch(() => ({}))) as Envelope;
+    throw new ApiError(codeFor(res.status), payload.error || `That did not go through (${res.status}).`);
+  }
+  if (!res.ok || res.url.includes('/web/login')) {
+    throw new ApiError(res.url.includes('/web/login') ? 'unauthorized' : 'unknown', 'Could not fetch the file.');
+  }
+  return toBase64(await res.blob());
+}

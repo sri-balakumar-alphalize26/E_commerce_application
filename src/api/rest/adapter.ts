@@ -6,22 +6,27 @@ import {
   Banner,
   Bill,
   CategoryNode,
+  ChatMessage,
   Customer,
   FeeLine,
   HomeSection,
   HomeTab,
   Mode,
+  MyReview,
   Order,
   OrderStatus,
   PayCode,
   PayMethod,
   Product,
   ProductDetail,
+  SavedUpi,
+  ScratchCard,
   Slot,
   TimelineStep,
   VariantGroup,
+  Wallet,
 } from '../types';
-import { absolute, request } from './client';
+import { absolute, download, request } from './client';
 
 /**
  * The live shop: the website's own `/369mart/*` routes, turned into the
@@ -52,6 +57,8 @@ interface Card {
   hasVariants?: boolean;
   description?: string;
   specs?: Record<string, string>;
+  /** On a variant: its choices in words, "Lenovo · Core i7 · 16GB". */
+  size?: string;
   /** On a variant: which value it is for each question, by attribute id. */
   combo?: Record<string, number>;
 }
@@ -95,6 +102,8 @@ interface WireAddress {
   state_id: number | false;
   country_id: number | false;
   default: boolean;
+  lat?: number;
+  lng?: number;
 }
 
 interface WireOrder {
@@ -115,6 +124,53 @@ interface WireOrder {
   timeline: { state: string; at: number; note: string }[];
   canCancel: boolean;
   otp: string;
+  returns?: {
+    id: string;
+    kind: string;
+    state: string;
+    reason: string;
+    detail: string;
+    amount: number;
+    refunded: number;
+    photos: number;
+    at: number | null;
+  }[];
+  substitutes?: {
+    id: number;
+    state: string;
+    was: string;
+    qty: number;
+    wasPrice: number;
+    options: { id: number; name: string; image: string; price: number; youPay: number }[];
+    chosen: number | false;
+    deadline: number | null;
+    refund: number;
+  }[];
+}
+
+interface WireReview {
+  stars: number;
+  title: string;
+  text: string;
+  at: number | null;
+  state: string;
+  heldReason: string;
+  photos: number;
+  verified: boolean;
+  media?: unknown[];
+}
+
+function toMyReview(r: WireReview): MyReview {
+  return {
+    stars: r.stars,
+    title: r.title ?? '',
+    text: r.text ?? '',
+    at: r.at,
+    state: r.state || 'published',
+    heldReason: r.heldReason ?? '',
+    photos: Math.max(r.photos ?? 0, r.media?.length ?? 0),
+    verified: !!r.verified,
+  };
 }
 
 const wire = (mode: Mode): WireMode => (mode === 'express' ? 'all' : 'quick');
@@ -176,6 +232,7 @@ function toProduct(card: Card, info: ShopInfo, pageMode?: Mode): Product {
     id: String(card.id),
     name: card.name,
     brand: card.brand,
+    unit: card.size,
     price: card.price,
     mrp: card.mrp && card.mrp > card.price ? card.mrp : undefined,
     rating: card.rating,
@@ -216,6 +273,9 @@ function toAddress(a: WireAddress): Address {
     isDefault: !!a.default,
     stateId: a.state_id || undefined,
     countryId: a.country_id || undefined,
+    // The shop sends 0, 0 for an address nobody has pinned.
+    lat: a.lat || undefined,
+    lng: a.lng || undefined,
   };
 }
 
@@ -306,6 +366,24 @@ function toOrder(o: WireOrder, photos: Record<string, string | undefined>): Orde
     timeline,
     otp: status === 'delivered' || status === 'cancelled' ? '' : o.otp,
     canCancel: !!o.canCancel,
+    returns: (o.returns ?? []).map((r) => ({ ...r, kind: r.kind === 'replace' ? 'replace' : 'refund' })),
+    substitutes: (o.substitutes ?? []).map((s) => ({
+      id: String(s.id),
+      state: s.state,
+      was: s.was,
+      qty: s.qty,
+      wasPrice: s.wasPrice,
+      options: s.options.map((opt) => ({
+        id: String(opt.id),
+        name: opt.name,
+        image: absolute(opt.image),
+        price: opt.price,
+        youPay: opt.youPay,
+      })),
+      chosen: s.chosen ? String(s.chosen) : undefined,
+      deadline: s.deadline,
+      refund: s.refund,
+    })),
   };
 }
 
@@ -340,7 +418,7 @@ const PAY_TEXT: Record<PayCode, { title: string; note: string; mark: string }> =
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function getBill(req: { items: Record<string, number>; coupon?: string | null; addressId?: string | null; slotFee?: number }) {
+async function getBill(req: { items: Record<string, number>; coupon?: string | null; addressId?: string | null; slotFee?: number; usePoints?: boolean }) {
   return request<{
     mrp: number;
     items: number;
@@ -354,12 +432,14 @@ async function getBill(req: { items: Record<string, number>; coupon?: string | n
     count: number;
     blocked: boolean | string;
     modes: Record<string, WireMode>;
+    points?: { usable: number; usableValue: number; applied: boolean; off: number } | null;
   }>('/369mart/cart/bill', {
     method: 'POST',
     body: {
       items: req.items,
       coupon: req.coupon ?? '',
       slotFee: req.slotFee ?? 0,
+      usePoints: !!req.usePoints,
       ...(req.addressId ? { addressId: Number(req.addressId) } : {}),
     },
   });
@@ -380,6 +460,45 @@ async function me(): Promise<Customer | null> {
     shopInfo().catch(() => null),
   ]);
   return { name: profile.name, email: profile.email, phone: profile.phone, walletBalance: wallet?.balance };
+}
+
+interface WireTicket {
+  messages?: { from: string; text: string; at: number | null }[];
+}
+
+/** A ticket's messages as chat lines: the customer's, and the staff's. */
+function toTranscript(ticket: WireTicket | undefined | null): ChatMessage[] {
+  return (ticket?.messages ?? []).map((m) => ({ from: m.from === 'me' ? 'me' : 'agent', text: m.text, at: m.at }));
+}
+
+interface WireScratch {
+  id: string;
+  from: string;
+  scratched: boolean;
+  reward: { type: string; amount?: number; code?: string; title?: string };
+}
+
+interface WireUpi {
+  id: string;
+  vpa: string;
+  app: string;
+  default: boolean;
+}
+
+function toScratch(c: WireScratch): ScratchCard {
+  return { id: String(c.id), from: c.from, scratched: !!c.scratched, reward: c.reward ?? { type: '' } };
+}
+
+function toUpis(r: { upis?: WireUpi[] }): SavedUpi[] {
+  return (r.upis ?? []).map((u) => ({ id: String(u.id), vpa: u.vpa, app: u.app, isDefault: !!u.default }));
+}
+
+async function getWallet(): Promise<Wallet> {
+  const [r] = await Promise.all([
+    request<{ balance: number; limit: number; min_topup: number; ledger: Wallet['ledger'] }>('/369mart/wallet'),
+    shopInfo().catch(() => null),
+  ]);
+  return { balance: r.balance, limit: r.limit, minTopup: r.min_topup, ledger: r.ledger ?? [] };
 }
 
 export const restAdapter: ApiAdapter = {
@@ -583,6 +702,10 @@ export const restAdapter: ApiAdapter = {
       couponHint: best ? { code: best.code, saves: best.off } : undefined,
       total: b.total,
       saved: b.saved,
+      points:
+        b.points && (b.points.usable > 0 || b.points.applied)
+          ? { usable: b.points.usable, value: b.points.usableValue, applied: !!b.points.applied, off: b.points.off }
+          : undefined,
       blocked: !b.blocked
         ? undefined
         : typeof b.blocked === 'string'
@@ -646,6 +769,7 @@ export const restAdapter: ApiAdapter = {
       pin: input.zip,
       ...(stateId ? { state_id: stateId } : {}),
       ...(countryId ? { country_id: countryId } : {}),
+      ...(input.lat && input.lng ? { lat: input.lat, lng: input.lng } : {}),
     };
     const r = id
       ? await request<{ address: WireAddress }>(`/369mart/addresses/${id}`, { method: 'PATCH', body })
@@ -660,6 +784,18 @@ export const restAdapter: ApiAdapter = {
 
   async deleteAddress(id) {
     await request(`/369mart/addresses/${id}`, { method: 'DELETE' });
+  },
+
+  async locate(lat, lng) {
+    try {
+      const r = await request<{ line?: string; area?: string; city?: string; zip?: string; state_id?: number }>('/369mart/geocode/reverse', {
+        method: 'POST',
+        body: { lat, lng },
+      });
+      return { line: r.line ?? '', area: r.area ?? '', city: r.city ?? '', zip: r.zip ?? '', stateId: r.state_id || undefined };
+    } catch {
+      return null;
+    }
   },
 
   async lookupPin(pin) {
@@ -685,13 +821,13 @@ export const restAdapter: ApiAdapter = {
         items: req.items,
         address_id: Number(req.addressId),
         coupon: req.coupon ?? '',
-        usePoints: false,
+        usePoints: !!req.usePoints,
         mode,
         slot_key: req.slotKey,
         slot: label,
         eta: label,
-        instructions: '',
-        whatsapp: false,
+        instructions: (req.instructions ?? '').trim(),
+        whatsapp: !!req.whatsapp,
       },
     });
 
@@ -735,6 +871,238 @@ export const restAdapter: ApiAdapter = {
   async cancelOrder(ref, reason) {
     await request(`/369mart/orders/${encodeURIComponent(ref)}/cancel`, { method: 'POST', body: { reason } });
     return restAdapter.order(ref);
+  },
+
+  async requestReturn(ref, input) {
+    await request(`/369mart/orders/${encodeURIComponent(ref)}/return`, {
+      method: 'POST',
+      body: { kind: input.kind, reason: input.reason, detail: input.detail, photos: input.photos.map((p) => p.data) },
+      // Photos make this the one slow call the app has.
+      timeoutMs: 60000,
+    });
+    return restAdapter.order(ref);
+  },
+
+  async answerSubstitute(ref, offerId, accept, productId) {
+    await request(`/369mart/orders/${encodeURIComponent(ref)}/substitute/${encodeURIComponent(offerId)}`, {
+      method: 'POST',
+      body: { accept, ...(productId ? { product_id: Number(productId) } : {}) },
+    });
+    return restAdapter.order(ref);
+  },
+
+  async rateOrder(ref, input) {
+    await request(`/369mart/orders/${encodeURIComponent(ref)}/rate`, {
+      method: 'POST',
+      body: { stars: input.stars, comment: input.comment, tags: [] },
+    });
+  },
+
+  async invoice(ref) {
+    return { name: `369mart-${ref}.pdf`, base64: await download(`/369mart/orders/${encodeURIComponent(ref)}/invoice`) };
+  },
+
+  async myReviews() {
+    const r = await request<{ reviews: Record<string, WireReview> }>('/369mart/reviews');
+    return Object.fromEntries(Object.entries(r.reviews ?? {}).map(([id, row]) => [id, toMyReview(row)]));
+  },
+
+  async writeReview(productId, input) {
+    const r = await request<{ review: WireReview }>(`/369mart/reviews/${encodeURIComponent(productId)}`, {
+      method: 'POST',
+      body: { stars: input.stars, title: input.title, text: input.text, tags: [] },
+    });
+    return toMyReview(r.review);
+  },
+
+  async deleteReview(productId) {
+    await request(`/369mart/reviews/${encodeURIComponent(productId)}`, { method: 'DELETE' });
+  },
+
+  async addReviewPhoto(productId, photo) {
+    const r = await request<{ review: WireReview }>(`/369mart/reviews/${encodeURIComponent(productId)}/media`, {
+      method: 'POST',
+      body: { name: photo.name, mime: photo.mime, data: photo.data },
+      timeoutMs: 60000,
+    });
+    return toMyReview(r.review);
+  },
+
+  async supportStart() {
+    const r = await request<{ text: string; chips?: string[]; agent?: boolean; ticket?: WireTicket }>('/369mart/support/greeting');
+    return {
+      greeting: { from: 'bot', text: r.text, chips: r.chips },
+      withAgent: !!r.agent,
+      history: toTranscript(r.ticket),
+    };
+  },
+
+  async supportAsk(text) {
+    const r = await request<{ text: string; chips?: string[]; actions?: { label: string; go: string[] }[]; agent?: boolean }>(
+      '/369mart/support/chat',
+      { method: 'POST', body: { text } }
+    );
+    return { reply: { from: 'bot', text: r.text, chips: r.chips, actions: r.actions }, toAgent: !!r.agent };
+  },
+
+  async supportAgent(text) {
+    const r = await request<{ reply: string; ticket?: WireTicket }>('/369mart/support/agent', { method: 'POST', body: { text } });
+    return { reply: r.reply, history: toTranscript(r.ticket) };
+  },
+
+  async supportSay(text) {
+    const r = await request<{ reply: string }>('/369mart/support/agent/say', { method: 'POST', body: { text } });
+    return { reply: typeof r.reply === 'string' ? r.reply : '' };
+  },
+
+  async supportTicket() {
+    const r = await request<{ ticket: WireTicket | null }>('/369mart/support/ticket');
+    return r.ticket ? toTranscript(r.ticket) : null;
+  },
+
+  async wishlist() {
+    return (await request<{ ids: string[] }>('/369mart/wishlist')).ids.map(String);
+  },
+
+  async addWish(id) {
+    return (await request<{ ids: string[] }>('/369mart/wishlist', { method: 'POST', body: { id: Number(id) } })).ids.map(String);
+  },
+
+  async removeWish(id) {
+    return (await request<{ ids: string[] }>(`/369mart/wishlist/${encodeURIComponent(id)}`, { method: 'DELETE' })).ids.map(String);
+  },
+
+  wallet: getWallet,
+
+  async topUp(amount) {
+    const started = await request<{ reference: string; state: string }>('/369mart/wallet/topup', {
+      method: 'POST',
+      body: { amount, method: 'upi' },
+    });
+    // Nothing is credited until the payment company confirms; ask a few times.
+    let state = started.state;
+    for (let i = 0; i < 8 && state !== 'done'; i += 1) {
+      if (state === 'cancel' || state === 'error') {
+        throw new ApiError('invalid', 'The payment did not go through. No money was added.');
+      }
+      await sleep(2000);
+      state = (await request<{ state: string }>(`/369mart/wallet/topup/${encodeURIComponent(started.reference)}`)).state;
+    }
+    if (state !== 'done') {
+      throw new ApiError('invalid', 'The payment has not been confirmed, so no money was added yet.');
+    }
+    return getWallet();
+  },
+
+  async rewards() {
+    const [r] = await Promise.all([
+      request<{ scratch: WireScratch[]; won: string[]; coupons: WireCoupon[] }>('/369mart/rewards'),
+      shopInfo().catch(() => null),
+    ]);
+    return {
+      coupons: r.coupons.map((c) => ({ code: c.code, title: c.title, note: c.note ?? '' })),
+      cards: r.scratch.map(toScratch),
+      won: r.won ?? [],
+    };
+  },
+
+  async scratch(id) {
+    const r = await request<{ card: WireScratch }>(`/369mart/rewards/${encodeURIComponent(id)}/scratch`, { method: 'POST', body: {} });
+    return toScratch(r.card);
+  },
+
+  async referrals() {
+    const [r] = await Promise.all([
+      request<{
+        code: string;
+        link: string;
+        reward: number;
+        earned: number;
+        pending: number;
+        joined: number;
+        ordered: number;
+        referrals: { id: string; name: string; status: string; at: number | null }[];
+      }>('/369mart/referrals'),
+      shopInfo().catch(() => null),
+    ]);
+    return {
+      code: r.code,
+      link: r.link,
+      reward: r.reward,
+      earned: r.earned,
+      pending: r.pending,
+      joined: r.joined,
+      ordered: r.ordered,
+      friends: r.referrals ?? [],
+    };
+  },
+
+  async points() {
+    const [r] = await Promise.all([
+      request<{
+        enabled: boolean;
+        earnOn: string;
+        card: { number: string; points: number; value: number } | null;
+        rule: { spend: number; earn: number; minRedeem: number } | null;
+        history: { id: number; title: string; sub: string; points: number; credit: boolean; at: number | null; orderRef?: string }[];
+      }>('/369mart/loyalty'),
+      shopInfo().catch(() => null),
+    ]);
+    return {
+      enabled: !!r.enabled,
+      points: r.card?.points ?? 0,
+      value: r.card?.value ?? 0,
+      cardNumber: r.card?.number ?? '',
+      rule: r.rule ? { spend: r.rule.spend, earn: r.rule.earn, minRedeem: r.rule.minRedeem } : null,
+      earnOn: r.earnOn,
+      history: (r.history ?? []).map((h) => ({ ...h, id: String(h.id) })),
+    };
+  },
+
+  async notifications() {
+    const r = await request<{ notifications: { id: string; type: string; title: string; text: string; at: number; read: boolean; go?: string[] }[] }>(
+      '/369mart/notifications'
+    );
+    return r.notifications ?? [];
+  },
+
+  async markRead(ids) {
+    await request('/369mart/notifications/read', { method: 'POST', body: ids === 'all' ? { all: true } : { ids } });
+  },
+
+  async dismissNotice(id) {
+    await request('/369mart/notifications/dismiss', { method: 'POST', body: { ids: [id] } });
+  },
+
+  async saveProfile(input) {
+    await request('/369mart/profile', { method: 'PATCH', body: { name: input.name, phone: input.phone } });
+    const customer = await me();
+    if (!customer) throw new ApiError('unauthorized', 'Sign in to continue.');
+    return customer;
+  },
+
+  async savedUpis() {
+    return toUpis(await request<{ upis: WireUpi[] }>('/369mart/payment/methods'));
+  },
+
+  async addUpi(vpa) {
+    return toUpis(await request<{ upis: WireUpi[] }>('/369mart/payment/methods/upi', { method: 'POST', body: { vpa } }));
+  },
+
+  async removeUpi(id) {
+    return toUpis(await request<{ upis: WireUpi[] }>(`/369mart/payment/methods/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+  },
+
+  async recentSearches() {
+    return (await request<{ recent: string[] }>('/369mart/search/recent')).recent ?? [];
+  },
+
+  async addRecentSearch(q) {
+    return (await request<{ recent: string[] }>('/369mart/search/recent', { method: 'POST', body: { q } })).recent ?? [];
+  },
+
+  async clearRecentSearches() {
+    return (await request<{ recent: string[] }>('/369mart/search/recent', { method: 'DELETE' })).recent ?? [];
   },
 
   async orders() {

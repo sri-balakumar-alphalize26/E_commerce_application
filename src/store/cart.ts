@@ -9,7 +9,7 @@ interface CartState {
   /** Product id -> quantity. Kept on the phone; the server only prices it. */
   items: Record<string, number>;
   coupon: string | null;
-  /** Hearted products. On the phone for now; the wishlist proper comes later. */
+  /** Hearted products: My list. Kept on the phone, and on the account once signed in (see wish.ts). */
   wish: Record<string, true>;
   add: (id: string) => void;
   dec: (id: string) => void;
@@ -17,6 +17,8 @@ interface CartState {
   clear: () => void;
   setCoupon: (code: string | null) => void;
   toggleWish: (id: string) => void;
+  /** Replace the list with what the account holds. */
+  setWish: (ids: string[]) => void;
 }
 
 export const useCart = create<CartState>()(
@@ -42,6 +44,7 @@ export const useCart = create<CartState>()(
         }),
       clear: () => set({ items: {}, coupon: null }),
       setCoupon: (coupon) => set({ coupon }),
+      setWish: (ids) => set({ wish: Object.fromEntries(ids.map((id) => [id, true as const])) }),
       toggleWish: (id) =>
         set((s) => {
           const next = { ...s.wish };
