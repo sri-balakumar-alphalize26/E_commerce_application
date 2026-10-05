@@ -7,8 +7,10 @@ import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useSession } from '../src/store/session';
+import { syncWish } from '../src/store/wish';
 import { neutral } from '../src/theme/tokens';
 import { ToastHost } from '../src/ui/chrome';
+import { FlyLayer } from '../src/ui/fly';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -32,6 +34,12 @@ export default function RootLayout() {
     restore();
   }, [restore]);
 
+  // Whoever is signed in, My list is theirs: what the account holds, plus what was hearted signed out.
+  const who = useSession((s) => s.customer?.email);
+  useEffect(() => {
+    if (who) syncWish();
+  }, [who]);
+
   // A font error must not hold the app hostage: fall through to system fonts.
   const appReady = (fontsLoaded || !!fontError) && ready;
 
@@ -46,6 +54,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: neutral.soft } }} />
+          <FlyLayer />
           <ToastHost />
         </SafeAreaProvider>
       </QueryClientProvider>

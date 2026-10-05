@@ -1,13 +1,16 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import { HomeTab, Mode } from '../api/types';
 import { useAddresses } from '../hooks/queries';
 import { categoryHref } from '../lib/links';
 import { useCartCount } from '../store/cart';
 import { useMode } from '../store/mode';
 import { useSession } from '../store/session';
-import { neutral, PAD, useTheme } from '../theme/tokens';
+import { neutral, PAD, themeFor, useTheme } from '../theme/tokens';
+import { useCartTarget } from './fly';
 import { Icon, IconName, isIconName } from './Icon';
 import { T } from './T';
 
@@ -15,6 +18,10 @@ const MODES: { mode: Mode; label: string; icon: IconName }[] = [
   { mode: 'quick', label: 'Quick', icon: 'bolt' },
   { mode: 'express', label: 'Express', icon: 'truck' },
 ];
+
+const FLOOD_MS = 420;
+/** Big enough to cover the header from either tab, on a tablet too. */
+const FLOOD_R = 900;
 
 interface Props {
   eta?: string;
@@ -35,6 +42,26 @@ export function ModeHeader({ eta, tabs, searchHint }: Props) {
   const customer = useSession((s) => s.customer);
   const { data: addresses } = useAddresses();
   const home = addresses?.find((a) => a.isDefault) ?? addresses?.[0];
+  const cartMark = useCartTarget();
+
+  // Changing mode floods the new colour out from the tab that was tapped,
+  // over the old one, instead of snapping.
+  const still = useReducedMotion();
+  const [flood, setFlood] = useState<{ from: Mode; side: number } | null>(null);
+  const grow = useSharedValue(0);
+  const floodStyle = useAnimatedStyle(() => ({ transform: [{ scale: grow.value }] }));
+  const switchTo = (mode: Mode, side: number) => {
+    if (mode === t.mode) return;
+    if (!still) {
+      setFlood({ from: t.mode, side });
+      grow.value = 0;
+      grow.value = withTiming(1, { duration: FLOOD_MS, easing: Easing.bezier(0.22, 0.61, 0.36, 1) });
+      setTimeout(() => setFlood(null), FLOOD_MS + 30);
+    }
+    setMode(mode);
+  };
+  // While the flood runs, the old colour stays underneath it.
+  const base = flood ? themeFor(flood.from) : t;
 
   const openTab = (target: string) => {
     if (target === 'home') return;
@@ -44,9 +71,28 @@ export function ModeHeader({ eta, tabs, searchHint }: Props) {
   };
 
   return (
-    <LinearGradient colors={[t.accD, t.acc]} style={{ paddingHorizontal: PAD, paddingBottom: 10, gap: 9 }}>
+    <LinearGradient colors={[base.accD, base.acc]} style={{ paddingHorizontal: PAD, paddingBottom: 10, gap: 9, overflow: 'hidden' }}>
+      {flood ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            {
+              position: 'absolute',
+              left: flood.side === 0 ? '25%' : '75%',
+              top: 29,
+              width: FLOOD_R * 2,
+              height: FLOOD_R * 2,
+              marginLeft: -FLOOD_R,
+              marginTop: -FLOOD_R,
+              borderRadius: FLOOD_R,
+              backgroundColor: t.acc,
+            },
+            floodStyle,
+          ]}
+        />
+      ) : null}
       <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 8, paddingTop: 6 }}>
-        {MODES.map((m) => {
+        {MODES.map((m, side) => {
           const on = m.mode === t.mode;
           return (
             <Pressable
@@ -54,7 +100,7 @@ export function ModeHeader({ eta, tabs, searchHint }: Props) {
               accessibilityRole="tab"
               accessibilityLabel={`${m.label} delivery`}
               accessibilityState={{ selected: on }}
-              onPress={() => setMode(m.mode)}
+              onPress={() => switchTo(m.mode, side)}
               style={{
                 flex: 1,
                 height: 46,
@@ -101,6 +147,7 @@ export function ModeHeader({ eta, tabs, searchHint }: Props) {
         </View>
         <Pressable
           accessibilityRole="button"
+          ref={cartMark}
           accessibilityLabel={`Cart, ${n} items`}
           hitSlop={6}
           onPress={() => router.push('/cart')}

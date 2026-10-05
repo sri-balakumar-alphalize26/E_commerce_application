@@ -1,7 +1,7 @@
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, RefObject, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleProp, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBill, useCartProducts } from '../hooks/queries';
@@ -9,6 +9,7 @@ import { money } from '../lib/format';
 import { useCartCount } from '../store/cart';
 import { useToast } from '../store/toast';
 import { neutral, PAD, useTheme } from '../theme/tokens';
+import { useCartTarget } from './fly';
 import { Icon, IconName } from './Icon';
 import { Photo } from './product';
 import { T } from './T';
@@ -36,13 +37,15 @@ interface IconBtnProps {
   onPress?: () => void;
   badge?: number;
   color?: string;
+  innerRef?: RefObject<View | null>;
 }
 
 /** A 40dp icon button in a white header. */
-export function IconBtn({ name, label, onPress, badge, color = neutral.ink }: IconBtnProps) {
+export function IconBtn({ name, label, onPress, badge, color = neutral.ink, innerRef }: IconBtnProps) {
   const t = useTheme();
   return (
     <Pressable
+      ref={innerRef}
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
@@ -75,7 +78,8 @@ export function IconBtn({ name, label, onPress, badge, color = neutral.ink }: Ic
 export function CartBtn() {
   const router = useRouter();
   const n = useCartCount();
-  return <IconBtn name="cart" label={`Cart, ${n} items`} badge={n} onPress={() => router.push('/cart')} />;
+  const mark = useCartTarget();
+  return <IconBtn innerRef={mark} name="cart" label={`Cart, ${n} items`} badge={n} onPress={() => router.push('/cart')} />;
 }
 
 interface SubHeaderProps {
@@ -309,6 +313,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const n = useCartCount();
   const current = state.routes[state.index]?.name;
+  const cartMark = useCartTarget();
   return (
     <View
       style={{
@@ -326,6 +331,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
         return (
           <Pressable
             key={tab.route}
+            ref={tab.route === 'cart' ? cartMark : undefined}
             accessibilityRole="tab"
             accessibilityLabel={tab.label}
             accessibilityState={{ selected: on }}
@@ -420,4 +426,39 @@ export function Loading({ error, onRetry }: { error?: string; onRetry?: () => vo
       )}
     </View>
   );
+}
+
+/** A page with nothing on it yet: what it is for, and the way to fill it. */
+export function Empty({ icon, title, text, action, onAction }: { icon: IconName; title: string; text?: string; action?: string; onAction?: () => void }) {
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 }}>
+      <Icon name={icon} size={40} color={neutral.mut} />
+      <T w={600} s={15} style={{ textAlign: 'center' }}>
+        {title}
+      </T>
+      {text ? (
+        <T c={neutral.mut} style={{ textAlign: 'center' }}>
+          {text}
+        </T>
+      ) : null}
+      {action ? <Btn label={action} kind="pri" onPress={onAction} style={{ marginTop: 4 }} /> : null}
+    </View>
+  );
+}
+
+/** "Today, 5:42 pm", "3 Oct, 11:05 am": when something happened, on the phone's clock. */
+export function whenText(at: number | null | undefined): string {
+  if (!at) return '';
+  const d = new Date(at);
+  const h = d.getHours();
+  const time = `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
+  const today = new Date();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day =
+    d.toDateString() === today.toDateString()
+      ? 'Today'
+      : d.toDateString() === new Date(today.getTime() - 86400000).toDateString()
+        ? 'Yesterday'
+        : `${d.getDate()} ${months[d.getMonth()]}${d.getFullYear() === today.getFullYear() ? '' : ` ${d.getFullYear()}`}`;
+  return `${day}, ${time}`;
 }

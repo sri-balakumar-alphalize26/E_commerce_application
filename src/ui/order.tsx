@@ -1,4 +1,4 @@
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { OrderLine, TimelineStep } from '../api/types';
 import { money } from '../lib/format';
@@ -42,7 +42,8 @@ export function Timeline({ steps }: { steps: TimelineStep[] }) {
 }
 
 /** One row of an order's contents: thumbnail, name, quantity and price. */
-export function OrderLineRow({ line, size = 48, showMode }: { line: OrderLine; size?: number; showMode?: boolean }) {
+export function OrderLineRow({ line, size = 48, showMode, onReview }: { line: OrderLine; size?: number; showMode?: boolean; onReview?: () => void }) {
+  const t = useTheme();
   return (
     <View style={{ flexDirection: 'row', gap: 10, paddingVertical: 8, paddingHorizontal: PAD, borderBottomWidth: 1, borderBottomColor: neutral.ln }}>
       <Photo
@@ -58,6 +59,13 @@ export function OrderLineRow({ line, size = 48, showMode }: { line: OrderLine; s
           {showMode ? ` · ${line.mode === 'quick' ? 'Quick' : 'Express'}` : ''}
         </T>
       </View>
+      {onReview ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={`Review ${line.name}`} hitSlop={8} onPress={onReview} style={{ justifyContent: 'center' }}>
+          <T w={600} s={11.5} c={t.accInk}>
+            Review
+          </T>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

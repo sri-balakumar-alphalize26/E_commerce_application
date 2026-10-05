@@ -7,6 +7,7 @@ import { neutral, PAD, useTheme } from '../../../src/theme/tokens';
 import { Btn, Footer, IconBtn, Loading, Screen, SectionTitle, SubHeader } from '../../../src/ui/chrome';
 import { Icon } from '../../../src/ui/Icon';
 import { OrderLineRow } from '../../../src/ui/order';
+import { Printed } from '../../../src/ui/Printed';
 import { ProductCard } from '../../../src/ui/product';
 import { T } from '../../../src/ui/T';
 
@@ -77,6 +78,7 @@ export default function OrderPlaced() {
           </View>
         </View>
 
+        <Printed>
         <View style={{ backgroundColor: neutral.sur }}>
           <View
             style={{
@@ -121,6 +123,7 @@ export default function OrderPlaced() {
             ) : null}
           </View>
         </View>
+        </Printed>
 
         {more.length ? (
           <View style={{ paddingHorizontal: PAD, paddingTop: 4, gap: 8 }}>

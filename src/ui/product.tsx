@@ -1,11 +1,13 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, StyleProp, View, ViewStyle } from 'react-native';
 import { Img, Mode, Product } from '../api/types';
 import { count, money, percentOff } from '../lib/format';
 import { useCart } from '../store/cart';
+import { toggleWish } from '../store/wish';
 import { neutral, useTheme } from '../theme/tokens';
+import { flyToCart } from './fly';
 import { Icon, Star } from './Icon';
 import { T } from './T';
 
@@ -118,6 +120,7 @@ export function AddStepper({ product, tall }: { product: Product; tall?: boolean
   const qty = useCart((s) => s.items[product.id] ?? 0);
   const add = useCart((s) => s.add);
   const dec = useCart((s) => s.dec);
+  const button = useRef<View>(null);
   const h = tall ? 32 : 30;
 
   if (product.soldOut) {
@@ -135,7 +138,12 @@ export function AddStepper({ product, tall }: { product: Product; tall?: boolean
         accessibilityLabel={`Add ${product.name}`}
         hitSlop={6}
         // A product with a choice to make opens its page: nobody picked a variant yet.
-        onPress={() => (product.hasVariants ? router.push(`/product/${product.id}`) : add(product.id))}
+        ref={button}
+        onPress={() => {
+          if (product.hasVariants) return router.push(`/product/${product.id}`);
+          flyToCart(button.current, product.images[0]);
+          add(product.id);
+        }}
         style={({ pressed }) => ({
           height: h,
           paddingHorizontal: 14,
@@ -188,13 +196,12 @@ export function AddStepper({ product, tall }: { product: Product; tall?: boolean
 
 export function WishButton({ id, size = 26 }: { id: string; size?: number }) {
   const on = useCart((s) => !!s.wish[id]);
-  const toggle = useCart((s) => s.toggleWish);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={on ? 'Remove from my list' : 'Save to my list'}
       hitSlop={8}
-      onPress={() => toggle(id)}
+      onPress={() => toggleWish(id)}
       style={{
         width: size,
         height: size,
