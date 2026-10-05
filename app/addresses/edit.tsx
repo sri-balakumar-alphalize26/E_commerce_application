@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
 import { api } from '../../src/api/endpoints';
@@ -42,6 +43,8 @@ export default function EditAddress() {
   const [line, setLine] = useState('');
   const [area, setArea] = useState('');
   const [stateId, setStateId] = useState<number | undefined>(undefined);
+  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
   const [city, setCity] = useState('');
   const [zip, setZip] = useState('');
   const [busy, setBusy] = useState(false);
@@ -56,6 +59,7 @@ export default function EditAddress() {
     setLine(existing.line);
     setArea(existing.area);
     setStateId(existing.stateId);
+    setPin(existing.lat && existing.lng ? { lat: existing.lat, lng: existing.lng } : null);
     setCity(existing.city);
     setZip(existing.zip);
   }, [existing]);
@@ -77,6 +81,35 @@ export default function EditAddress() {
 
   if (!customer) return <Redirect href="/login?next=/addresses" />;
 
+  // Pin the address where the phone is, and fill in what the shop can tell from that spot.
+  const pinHere = async () => {
+    setLocating(true);
+    setError(null);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        setError({ message: 'Allow location to pin this address, or type it in below.' });
+        return;
+      }
+      const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const here = { lat: fix.coords.latitude, lng: fix.coords.longitude };
+      setPin(here);
+      const place = await api.locate(here.lat, here.lng);
+      if (place) {
+        // What was already typed is kept; only the empty boxes are filled.
+        setLine((v) => v || place.line);
+        setArea((v) => v || place.area);
+        setCity((v) => v || place.city);
+        setZip((v) => v || place.zip);
+        if (place.stateId) setStateId(place.stateId);
+      }
+    } catch {
+      setError({ message: 'Could not find where you are. Check that location is on, or type the address.' });
+    } finally {
+      setLocating(false);
+    }
+  };
+
   const save = async () => {
     if (!name.trim()) return setError({ field: 'name', message: 'Who should the rider ask for?' });
     if (phone.replace(/\D/g, '').length < 8) return setError({ field: 'phone', message: 'Enter a phone number the rider can call.' });
@@ -96,6 +129,8 @@ export default function EditAddress() {
           area: area.trim(),
           stateId,
           countryId: existing?.countryId,
+          lat: pin?.lat,
+          lng: pin?.lng,
           city: city.trim(),
           zip: zip.trim(),
           // A new address is the one being ordered to; an edited one keeps its place.
@@ -153,6 +188,19 @@ export default function EditAddress() {
                 );
               })}
             </View>
+          </View>
+          <View style={{ gap: 6 }}>
+            <Btn
+              label={pin ? 'Update to where I am now' : 'Use my current location'}
+              icon="pin"
+              busy={locating}
+              onPress={pinHere}
+            />
+            <T s={11} c={pin ? neutral.green : neutral.mut}>
+              {pin
+                ? 'Location pinned. The shop uses it to check whether Quick delivery reaches you.'
+                : 'Pinning the spot lets the shop check whether Quick delivery reaches you.'}
+            </T>
           </View>
           <Field label="Name" value={name} onChangeText={setName} autoComplete="name" error={fieldError('name')} />
           <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" error={fieldError('phone')} />
