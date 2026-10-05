@@ -11,6 +11,7 @@ import { neutral, PAD, useTheme } from '../../src/theme/tokens';
 import { Btn, Footer, IconBtn, Loading, Screen, SubHeader } from '../../src/ui/chrome';
 import { Icon } from '../../src/ui/Icon';
 import { OrderLineRow, RouteSketch, Timeline } from '../../src/ui/order';
+import { OrderExtras } from '../../src/ui/orderExtras';
 import { T } from '../../src/ui/T';
 
 /** One order: where it is, who is bringing it, the code for the door. */
@@ -59,7 +60,7 @@ export default function TrackOrder() {
     .join('')
     .slice(0, 2);
   const [lead, ...rest] = order.statusLine.split(' · ');
-  const help = () => toast('Help and support arrive with the next update.');
+  const help = () => router.push('/support');
 
   return (
     <Screen>
@@ -172,6 +173,8 @@ export default function TrackOrder() {
 
         <Timeline steps={order.timeline} />
 
+        <OrderExtras order={order} />
+
         <View style={{ backgroundColor: neutral.sur }}>
           <View
             style={{
@@ -191,7 +194,13 @@ export default function TrackOrder() {
             </T>
           </View>
           {order.lines.map((line) => (
-            <OrderLineRow key={line.id} line={line} size={44} />
+            <OrderLineRow
+              key={line.id}
+              line={line}
+              size={44}
+              // A product can be reviewed once it has arrived. A chosen variant is reviewed as its product.
+              onReview={order.status === 'delivered' && !line.id.startsWith('v') ? () => router.push(`/review/${line.id}`) : undefined}
+            />
           ))}
           {order.address ? (
             <View style={{ paddingVertical: 8, paddingHorizontal: PAD }}>

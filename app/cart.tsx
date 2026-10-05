@@ -6,6 +6,7 @@ import { useAddresses, useBill, useCartProducts, useHome } from '../src/hooks/qu
 import { money } from '../src/lib/format';
 import { useCart } from '../src/store/cart';
 import { useSession } from '../src/store/session';
+import { toggleWish } from '../src/store/wish';
 import { toast } from '../src/store/toast';
 import { neutral, PAD, useTheme } from '../src/theme/tokens';
 import { Btn, Footer, FooterTotal, Loading, Screen, SectionTitle, SubHeader } from '../src/ui/chrome';
@@ -16,7 +17,6 @@ import { T } from '../src/ui/T';
 function Line({ product, last }: { product: Product; last: boolean }) {
   const router = useRouter();
   const remove = useCart((s) => s.remove);
-  const toggleWish = useCart((s) => s.toggleWish);
   const wished = useCart((s) => !!s.wish[product.id]);
   return (
     <View style={{ flexDirection: 'row', gap: 10, paddingVertical: 10, paddingHorizontal: PAD, borderBottomWidth: last ? 0 : 1, borderBottomColor: neutral.ln }}>
@@ -30,6 +30,11 @@ function Line({ product, last }: { product: Product; last: boolean }) {
         <T s={12} numberOfLines={2} style={{ lineHeight: 16 }}>
           {product.name}
         </T>
+        {product.unit ? (
+          <T s={11} c={neutral.mut} numberOfLines={1}>
+            {product.unit}
+          </T>
+        ) : null}
         <Price price={product.price} mrp={product.mrp} size={13} showOff />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2 }}>
           <Pressable

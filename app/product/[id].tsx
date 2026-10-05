@@ -266,6 +266,11 @@ export default function ProductPage() {
           <T w={500} s={15} style={{ lineHeight: 20 }}>
             {p.name}
           </T>
+          {p.unit ? (
+            <T s={12} c={neutral.mut}>
+              {p.unit}
+            </T>
+          ) : null}
           <Rating product={p} />
           <Price price={p.price} mrp={p.mrp} size={21} offFirst mrpLabel />
           <T s={10.5} c={neutral.mut}>

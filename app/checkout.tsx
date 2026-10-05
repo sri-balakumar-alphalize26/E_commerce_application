@@ -1,16 +1,17 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Redirect, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, View } from 'react-native';
+import { ActivityIndicator, ScrollView, Switch, View } from 'react-native';
 import { api } from '../src/api/endpoints';
 import { ApiError, Mode, PayCode } from '../src/api/types';
 import { useAddresses, useBill, useSlots } from '../src/hooks/queries';
-import { money } from '../src/lib/format';
+import { count, money } from '../src/lib/format';
 import { useCart } from '../src/store/cart';
 import { useSession } from '../src/store/session';
 import { toast } from '../src/store/toast';
 import { neutral, PAD, useTheme } from '../src/theme/tokens';
 import { Btn, Footer, FooterTotal, Loading, Screen, SubHeader } from '../src/ui/chrome';
+import { Field } from '../src/ui/Field';
 import { Icon } from '../src/ui/Icon';
 import { GroupTitle, OptionRow } from '../src/ui/OptionRow';
 import { T } from '../src/ui/T';
@@ -61,6 +62,9 @@ export default function Checkout() {
   const [slotKey, setSlotKey] = useState<string | null>(null);
   const [pay, setPay] = useState<PayCode | null>(null);
   const [placing, setPlacing] = useState(false);
+  const [usePoints, setUsePoints] = useState(false);
+  const [whatsapp, setWhatsapp] = useState(false);
+  const [instructions, setInstructions] = useState('');
   // The order's reference, kept across re-pricing so a changed slot is still the same order.
   const ref = useRef<string | undefined>(undefined);
 
@@ -74,7 +78,7 @@ export default function Checkout() {
     : null;
   const mySlots = (slots ?? []).filter((s) => s.mode === orderMode);
   const slot = mySlots.find((s) => s.key === slotKey) ?? mySlots[0];
-  const { data: bill, error, refetch } = useBill({ addressId: address?.id, slotFee: slot?.fee ?? 0 });
+  const { data: bill, error, refetch } = useBill({ addressId: address?.id, slotFee: slot?.fee ?? 0, usePoints });
 
   // With an address and a slot the shop writes the order down. That prices it
   // for good and says how it can be paid; nothing is charged until Pay.
@@ -84,9 +88,9 @@ export default function Checkout() {
     .join(',');
   const canDraft = !!customer && !!address && !!slot && !!bill && !bill.blocked && !placing;
   const draft = useQuery({
-    queryKey: ['draft', itemsKey, coupon, address?.id, slot?.key],
+    queryKey: ['draft', itemsKey, coupon, address?.id, slot?.key, usePoints],
     queryFn: async () => {
-      const d = await api.draftOrder({ items, addressId: address!.id, slotKey: slot!.key, coupon, ref: ref.current });
+      const d = await api.draftOrder({ items, addressId: address!.id, slotKey: slot!.key, coupon, ref: ref.current, usePoints });
       ref.current = d.ref;
       return d;
     },
@@ -114,10 +118,24 @@ export default function Checkout() {
   const ready = !!draft.data && !!method && !bill.blocked;
 
   const place = async () => {
-    if (!draft.data || !method) return;
+    if (!draft.data || !method || !address || !slot) return;
     setPlacing(true);
     try {
-      const order = await api.payOrder(draft.data.ref, method.code);
+      // Written once more with the note and the WhatsApp choice as they now stand: the same
+      // order, same reference, so typing a note never made a second one.
+      const final = await api.draftOrder({
+        items,
+        addressId: address.id,
+        slotKey: slot.key,
+        coupon,
+        ref: draft.data.ref,
+        usePoints,
+        whatsapp,
+        instructions,
+      });
+      const order = await api.payOrder(final.ref, method.code);
+      queryClient.invalidateQueries({ queryKey: ['points'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.setQueryData(['order', order.ref], order);
       router.replace(`/order/placed/${order.ref}`);
@@ -192,6 +210,52 @@ export default function Checkout() {
             ))}
           </View>
         ) : null}
+
+        <View style={{ backgroundColor: neutral.sur, padding: PAD, gap: 10 }}>
+          <Field
+            label="Instructions for the rider (optional)"
+            value={instructions}
+            onChangeText={setInstructions}
+            placeholder="Ring the bell, leave at the gate…"
+            maxLength={200}
+          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <T w={500} s={12.5}>
+                Send updates on WhatsApp
+              </T>
+              <T s={11} c={neutral.mut}>
+                Packed, on the way and delivered, to {address?.phone || 'your number'}.
+              </T>
+            </View>
+            <Switch
+              accessibilityLabel="Send updates on WhatsApp"
+              value={whatsapp}
+              onValueChange={setWhatsapp}
+              trackColor={{ true: t.acc, false: neutral.radio }}
+              thumbColor="#fff"
+            />
+          </View>
+          {bill.points && bill.points.usable > 0 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: neutral.ln, paddingTop: 10 }}>
+              <View style={{ flex: 1 }}>
+                <T w={500} s={12.5}>
+                  Use {count(bill.points.usable)} points
+                </T>
+                <T s={11} c={neutral.green}>
+                  {bill.points.applied ? `${money(bill.points.off)} taken off this order` : `Saves ${money(bill.points.value)} on this order`}
+                </T>
+              </View>
+              <Switch
+                accessibilityLabel="Pay part of this order with points"
+                value={usePoints}
+                onValueChange={setUsePoints}
+                trackColor={{ true: t.acc, false: neutral.radio }}
+                thumbColor="#fff"
+              />
+            </View>
+          ) : null}
+        </View>
 
         <View>
           <GroupTitle title="Pay with" />
