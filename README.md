@@ -47,11 +47,26 @@ npm run typecheck
 npm run lint
 ```
 
-## Not built yet
+## What it does
 
-Wishlist screen, wallet top-up, reviews, returns, rewards, referrals, loyalty
-points, notifications, support chat, and the demo's animations.
+Browse (Quick and Express), search, product pages with choices, cart priced by
+the shop, checkout with rider instructions and WhatsApp updates, orders and
+tracking, cancel, return or replace with photos, rate an order, reviews with
+photos, invoice, replacement offers, My list, wallet, coupons and scratch cards,
+refer and earn, points, notifications, saved UPI IDs, addresses with a map pin,
+and the support chat.
 
-The shop's server does not yet offer: online payment (UPI / card), the rider's
-live position, OTP sign-in, or push notifications. The app shows only what the
-server gives.
+## Waiting on the shop's server
+
+Online payment (UPI / card) and so wallet top-up, the rider's live position,
+OTP sign-in, and push notifications. The app shows only what the server gives.
+
+## Building an installable app
+
+The server address is fixed when the app is built, so it must be one the
+phones can reach:
+
+```
+EXPO_PUBLIC_API_URL=https://<shop-server> npx expo prebuild --platform android
+cd android && ./gradlew assembleRelease
+```

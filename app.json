@@ -7,16 +7,17 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "backgroundColor": "#FFFFFF"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.alphalize.mart369"
     },
     "android": {
       "package": "com.alphalize.mart369",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundColor": "#E97A1C"
+      }
     },
     "web": {
       "output": "single",
@@ -24,10 +25,33 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "369 Mart uses your location to pin your delivery address."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "369 Mart uses your photos for returns and reviews.",
+          "cameraPermission": "369 Mart uses the camera for photos of returns and reviews."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false
-    }
+    },
+    "icon": "./assets/images/icon.png"
   }
 }
