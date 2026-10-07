@@ -7,6 +7,7 @@ import {
   Bill,
   CategoryNode,
   ChatMessage,
+  Country,
   Customer,
   FeeLine,
   HomeSection,
@@ -124,6 +125,7 @@ interface WireOrder {
   timeline: { state: string; at: number; note: string }[];
   canCancel: boolean;
   otp: string;
+  channel?: string;
   returns?: {
     id: string;
     kind: string;
@@ -366,6 +368,7 @@ function toOrder(o: WireOrder, photos: Record<string, string | undefined>): Orde
     timeline,
     otp: status === 'delivered' || status === 'cancelled' ? '' : o.otp,
     canCancel: !!o.canCancel,
+    channel: o.channel === 'whatsapp' ? 'whatsapp' : 'website',
     returns: (o.returns ?? []).map((r) => ({ ...r, kind: r.kind === 'replace' ? 'replace' : 'refund' })),
     substitutes: (o.substitutes ?? []).map((s) => ({
       id: String(s.id),
@@ -446,7 +449,7 @@ async function getBill(req: { items: Record<string, number>; coupon?: string | n
 }
 
 async function me(): Promise<Customer | null> {
-  let profile: { name: string; email: string; phone: string };
+  let profile: { name: string; email: string; phone: string; phoneVerified?: boolean; needPhone?: boolean };
   try {
     profile = await request('/369mart/auth/me', { signingIn: true });
   } catch (err) {
@@ -459,7 +462,14 @@ async function me(): Promise<Customer | null> {
     request<{ balance: number }>('/369mart/wallet').catch(() => null),
     shopInfo().catch(() => null),
   ]);
-  return { name: profile.name, email: profile.email, phone: profile.phone, walletBalance: wallet?.balance };
+  return {
+    name: profile.name,
+    email: profile.email,
+    phone: profile.phone,
+    walletBalance: wallet?.balance,
+    phoneVerified: !!profile.phoneVerified,
+    needPhone: !!profile.needPhone,
+  };
 }
 
 interface WireTicket {
@@ -748,6 +758,38 @@ export const restAdapter: ApiAdapter = {
 
   async logout() {
     await request('/369mart/auth/logout', { method: 'POST', body: {}, signingIn: true });
+  },
+
+  async phoneForm() {
+    const r = await request<{
+      country: Country;
+      countries: Country[];
+      phone?: { length: number; example: string };
+    }>('/369mart/auth/phone-form', { signingIn: true });
+    return { country: r.country, countries: r.countries, hint: r.phone };
+  },
+
+  async phoneStart(input) {
+    // Adding a number is for the signed-in account; the other two are public.
+    const path = input.purpose === 'add' ? '/369mart/auth/phone/add-start' : '/369mart/auth/phone/start';
+    const r = await request<{ message: string; resendIn: number }>(path, {
+      method: 'POST',
+      body: { ...input },
+      signingIn: input.purpose !== 'add',
+    });
+    return { message: r.message, resendIn: r.resendIn || 60 };
+  },
+
+  async phoneVerify(input) {
+    const path = input.purpose === 'add' ? '/369mart/auth/phone/add-verify' : '/369mart/auth/phone/verify';
+    const r = await request<{ created?: boolean; joined?: { orders: number; addresses: number } }>(path, {
+      method: 'POST',
+      body: { ...input },
+      signingIn: input.purpose !== 'add',
+    });
+    const customer = await me();
+    if (!customer) throw new ApiError('unknown', 'Signed in, but the shop did not keep the session. Try again.');
+    return { customer, created: !!r.created, joined: r.joined ?? { orders: 0, addresses: 0 } };
   },
 
   async addresses() {
@@ -1075,7 +1117,9 @@ export const restAdapter: ApiAdapter = {
   },
 
   async saveProfile(input) {
-    await request('/369mart/profile', { method: 'PATCH', body: { name: input.name, phone: input.phone } });
+    const body: Record<string, string> = { name: input.name };
+    if (input.email) body.email = input.email;
+    await request('/369mart/profile', { method: 'PATCH', body });
     const customer = await me();
     if (!customer) throw new ApiError('unauthorized', 'Sign in to continue.');
     return customer;

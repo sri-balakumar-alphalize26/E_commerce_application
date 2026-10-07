@@ -507,6 +507,41 @@ export const mockAdapter: ApiAdapter = {
     await save();
   },
 
+  async phoneForm() {
+    const countries = [
+      { code: 'IN', name: 'India', dial: '+91' },
+      { code: 'OM', name: 'Oman', dial: '+968' },
+      { code: 'AE', name: 'United Arab Emirates', dial: '+971' },
+    ];
+    return wait({ country: countries[0], countries, hint: { length: 10, example: '9876543210' } });
+  },
+
+  async phoneStart(input) {
+    if (input.phone.replace(/\D/g, '').length < 8) {
+      throw new ApiError('invalid', 'Enter a valid mobile number.', 'phone');
+    }
+    if (input.purpose === 'signup' && (input.name ?? '').trim().length < 2) {
+      throw new ApiError('invalid', 'Enter your name as it should appear on deliveries.', 'name');
+    }
+    return wait({ message: 'Demo mode: the code is 123456.', resendIn: 60 });
+  },
+
+  async phoneVerify(input) {
+    if (input.code !== '123456') throw new ApiError('invalid', 'That code is not right.', 'code');
+    const s = await load();
+    const dial = (await mockAdapter.phoneForm()).countries.find((c) => c.code === input.country)?.dial ?? '';
+    const phone = `${dial}${input.phone.replace(/\D/g, '')}`;
+    if (input.purpose === 'add' && s.customer) {
+      s.customer = { ...s.customer, phone, phoneVerified: true, needPhone: false };
+    } else {
+      const name = input.purpose === 'signup' ? (input.name ?? '').trim() : DEMO_CUSTOMER.name;
+      s.customer = { ...DEMO_CUSTOMER, name, email: '', phone, phoneVerified: true, needPhone: false };
+      if (!s.addresses.length) s.addresses = [DEMO_ADDRESS];
+    }
+    await save();
+    return wait({ customer: s.customer, created: input.purpose === 'signup', joined: { orders: 0, addresses: s.addresses.length } });
+  },
+
   async addresses() {
     return wait([...(await signedIn()).addresses]);
   },
@@ -829,7 +864,10 @@ export const mockAdapter: ApiAdapter = {
   async saveProfile(input) {
     const s = await signedIn();
     if (!input.name.trim()) throw new ApiError('invalid', 'Enter your name.', 'name');
-    s.customer = { ...s.customer, name: input.name.trim(), phone: input.phone.trim() };
+    if (input.email && !/^\S+@\S+\.\S+$/.test(input.email.trim())) {
+      throw new ApiError('invalid', 'Enter a valid email address.', 'email');
+    }
+    s.customer = { ...s.customer, name: input.name.trim(), email: input.email?.trim() || s.customer.email };
     await save();
     return wait(s.customer);
   },

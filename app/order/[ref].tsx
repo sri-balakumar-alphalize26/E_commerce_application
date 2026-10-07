@@ -74,6 +74,11 @@ export default function TrackOrder() {
           <T w={700} s={20} style={{ letterSpacing: -0.2 }}>
             {order.headline}
           </T>
+          {order.channel === 'whatsapp' ? (
+            <T s={11} w={600} c={neutral.green}>
+              Ordered on WhatsApp · changes and returns are handled in the chat
+            </T>
+          ) : null}
           <T s={12} c={neutral.mut}>
             <T w={500} s={12}>
               {lead}

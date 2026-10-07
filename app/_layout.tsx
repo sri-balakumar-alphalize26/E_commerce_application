@@ -1,6 +1,6 @@
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, useFonts } from '@expo-google-fonts/inter';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { View } from 'react-native';
@@ -35,10 +35,20 @@ export default function RootLayout() {
   }, [restore]);
 
   // Whoever is signed in, My list is theirs: what the account holds, plus what was hearted signed out.
-  const who = useSession((s) => s.customer?.email);
+  const who = useSession((s) => s.customer?.email || s.customer?.phone);
   useEffect(() => {
     if (who) syncWish();
   }, [who]);
+
+  // The mobile number is the account's identity - it is what brings the
+  // customer's WhatsApp orders in. An account without a proven one (an older
+  // email account) adds it before anything else.
+  const router = useRouter();
+  const pathname = usePathname();
+  const needPhone = useSession((s) => !!s.customer?.needPhone);
+  useEffect(() => {
+    if (ready && needPhone && pathname !== '/add-phone') router.replace('/add-phone');
+  }, [ready, needPhone, pathname, router]);
 
   // A font error must not hold the app hostage: fall through to system fonts.
   const appReady = (fontsLoaded || !!fontError) && ready;

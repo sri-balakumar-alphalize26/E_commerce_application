@@ -128,7 +128,8 @@ export async function request<T>(path: string, opts: RequestOptions = {}, retrie
         : code === 'unauthorized'
           ? 'Sign in to continue.'
           : `That did not go through (${res.status}).`,
-      typeof payload.field === 'string' ? payload.field : undefined
+      typeof payload.field === 'string' ? payload.field : undefined,
+      payload as unknown as Record<string, unknown>
     );
   }
   return payload as unknown as T;

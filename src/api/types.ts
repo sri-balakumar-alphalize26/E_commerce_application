@@ -309,6 +309,8 @@ export interface Order {
   canCancel: boolean;
   returns: OrderReturn[];
   substitutes: Substitute[];
+  /** Which door the order came in by. A WhatsApp order is managed in the chat. */
+  channel?: 'website' | 'whatsapp';
 }
 
 export interface DraftRequest {
@@ -352,6 +354,51 @@ export interface Customer {
   email: string;
   phone: string;
   walletBalance?: number;
+  /** The number was proven with a WhatsApp code. */
+  phoneVerified?: boolean;
+  /** No proven number yet (an older email account): "Add your mobile number" comes first. */
+  needPhone?: boolean;
+}
+
+/** A country the number picker offers. `dial` is "+91". */
+export interface Country {
+  code: string;
+  name: string;
+  dial: string;
+}
+
+/** The number picker's data, before anyone is signed in. The default country is the shop's. */
+export interface PhoneForm {
+  country: Country;
+  countries: Country[];
+  /** Digits in a mobile number for the default country, and an example of one. */
+  hint?: { length: number; example: string };
+}
+
+/** signin: number + code. signup: name + number + code. add: a signed-in account proving its number. */
+export type PhonePurpose = 'signin' | 'signup' | 'add';
+
+export interface PhoneStartInput {
+  phone: string;
+  /** ISO code from the picker, "IN". */
+  country: string;
+  purpose: PhonePurpose;
+  name?: string;
+}
+
+export interface PhoneVerifyInput extends PhoneStartInput {
+  code: string;
+  referral?: string;
+  /** Only for an account whose number was saved but never proven, once. */
+  password?: string;
+}
+
+export interface PhoneVerifyResult {
+  customer: Customer;
+  /** True when this sign-in made the account. */
+  created: boolean;
+  /** What the account now holds from WhatsApp. */
+  joined: { orders: number; addresses: number };
 }
 
 /** One line of the wallet's history. `amount` is always positive; the kind says which way it went. */
@@ -466,10 +513,13 @@ export class ApiError extends Error {
   code: ApiErrorCode;
   /** The form field the server blames, when it names one. */
   field?: string;
-  constructor(code: ApiErrorCode, message: string, field?: string) {
+  /** Anything else the shop said with the refusal: { signup: true }, { needPassword: true }. */
+  info: Record<string, unknown>;
+  constructor(code: ApiErrorCode, message: string, field?: string, info: Record<string, unknown> = {}) {
     super(message);
     this.code = code;
     this.field = field;
+    this.info = info;
   }
 }
 
@@ -492,6 +542,13 @@ export interface ApiAdapter {
   login(login: string, password: string): Promise<Customer>;
   signup(input: { name: string; email: string; password: string; phone?: string }): Promise<Customer>;
   logout(): Promise<void>;
+
+  /** Default country (the shop's) and every country, for the number picker. */
+  phoneForm(): Promise<PhoneForm>;
+  /** Send a 6-digit code to the number's WhatsApp. Says why not, in words, when it can't. */
+  phoneStart(input: PhoneStartInput): Promise<{ message: string; resendIn: number }>;
+  /** The code (and once, maybe, a password) signs in, signs up or proves the number. */
+  phoneVerify(input: PhoneVerifyInput): Promise<PhoneVerifyResult>;
 
   addresses(): Promise<Address[]>;
   saveAddress(input: AddressInput, id?: string): Promise<Address>;
@@ -558,7 +615,8 @@ export interface ApiAdapter {
   markRead(ids: string[] | 'all'): Promise<void>;
   dismissNotice(id: string): Promise<void>;
 
-  saveProfile(input: { name: string; phone: string }): Promise<Customer>;
+  /** Name, and an optional email. The number changes only through a WhatsApp code (phoneStart 'add'). */
+  saveProfile(input: { name: string; email?: string }): Promise<Customer>;
 
   savedUpis(): Promise<SavedUpi[]>;
   addUpi(vpa: string): Promise<SavedUpi[]>;

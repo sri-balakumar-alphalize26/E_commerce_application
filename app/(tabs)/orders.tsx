@@ -26,6 +26,11 @@ function OrderCard({ order }: { order: Order }) {
         <T w={600} s={12} c={over ? (order.status === 'cancelled' ? neutral.red : neutral.green) : t.accInk} style={{ flex: 1 }} numberOfLines={1}>
           {order.status === 'cancelled' ? 'Cancelled' : order.headline}
         </T>
+        {order.channel === 'whatsapp' ? (
+          <T s={10.5} w={600} c={neutral.green} style={{ backgroundColor: neutral.greenSoft, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 8 }}>
+            via WhatsApp
+          </T>
+        ) : null}
         <T s={11} c={neutral.mut}>
           #{order.ref}
         </T>

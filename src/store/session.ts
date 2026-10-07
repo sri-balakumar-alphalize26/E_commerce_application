@@ -1,15 +1,17 @@
 import { create } from 'zustand';
 import { api } from '../api/endpoints';
 import { setSignedOutHandler } from '../api/rest/client';
-import { Customer } from '../api/types';
+import { Customer, PhoneVerifyInput, PhoneVerifyResult } from '../api/types';
 
 interface SessionState {
   /** False until the first "who am I" has come back, so nothing flashes signed-out. */
   ready: boolean;
   customer: Customer | null;
   restore: () => Promise<void>;
-  login: (login: string, password: string) => Promise<void>;
+  login: (login: string, password: string) => Promise<Customer>;
   signup: (input: { name: string; email: string; password: string; phone?: string }) => Promise<void>;
+  /** The WhatsApp code signs in, signs up, or proves the signed-in account's number. */
+  phoneVerify: (input: PhoneVerifyInput) => Promise<PhoneVerifyResult>;
   logout: () => Promise<void>;
 }
 
@@ -25,10 +27,17 @@ export const useSession = create<SessionState>((set) => ({
     }
   },
   login: async (login, password) => {
-    set({ customer: await api.login(login, password) });
+    const customer = await api.login(login, password);
+    set({ customer });
+    return customer;
   },
   signup: async (input) => {
     set({ customer: await api.signup(input) });
+  },
+  phoneVerify: async (input) => {
+    const result = await api.phoneVerify(input);
+    set({ customer: result.customer });
+    return result;
   },
   logout: async () => {
     await api.logout().catch(() => {});

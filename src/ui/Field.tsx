@@ -15,9 +15,11 @@ export function Field({ label, error, style, ...rest }: Props) {
   const [focused, setFocused] = useState(false);
   return (
     <View style={{ gap: 4 }}>
-      <T w={500} s={11.5} c={neutral.mut}>
-        {label}
-      </T>
+      {label ? (
+        <T w={500} s={11.5} c={neutral.mut}>
+          {label}
+        </T>
+      ) : null}
       <TextInput
         accessibilityLabel={label}
         placeholderTextColor="#9aa4ae"
